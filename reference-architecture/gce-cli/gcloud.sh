@@ -1,4 +1,4 @@
-#!/usr/local/bin/bash
+#!/bin/bash
 
 # MIT License
 #
@@ -376,6 +376,12 @@ metadata=""
 if [[ -n "${STARTUP_SCRIPT_FILE:-}" ]]; then
     metadata+="startup-script=${STARTUP_SCRIPT_FILE}"
 fi
+if [[ -n "${USER_DATA_FILE:-}" ]]; then
+    if [[ -n "${metadata}" ]]; then
+        metadata+=","
+    fi
+    metadata+="user-data=${USER_DATA_FILE}"
+fi
 
 # Create instance templates
 (
@@ -610,17 +616,3 @@ else
 fi ) &
 
 for i in `jobs -p`; do wait $i; done
-
-# Prepare config file for ansible based on the configuration from this script
-export DNS_DOMAIN \
-    OCP_APPS_DNS_NAME \
-    MASTER_DNS_NAME \
-    INTERNAL_MASTER_DNS_NAME \
-    CONSOLE_PORT \
-    INFRA_NODE_INSTANCE_GROUP_SIZE \
-    REGISTRY_BUCKET \
-    GCLOUD_PROJECT \
-    OCP_NETWORK \
-    OCP_IDENTITY_PROVIDERS
-envsubst < "${DIR}/ansible-config.yml.tpl" > "${DIR}/working/ansible-config.yml"
-

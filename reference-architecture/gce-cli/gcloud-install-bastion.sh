@@ -1,4 +1,4 @@
-#!/usr/local/bin/bash
+#!/bin/bash
 
 # MIT License
 #
@@ -29,8 +29,22 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 source "${DIR}/config.sh"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Prepare config file for ansible based on the configuration from this script
+export DNS_DOMAIN \
+    OCP_APPS_DNS_NAME \
+    MASTER_DNS_NAME \
+    INTERNAL_MASTER_DNS_NAME \
+    CONSOLE_PORT \
+    INFRA_NODE_INSTANCE_GROUP_SIZE \
+    REGISTRY_BUCKET \
+    GCLOUD_PROJECT \
+    OCP_NETWORK \
+    OCP_IDENTITY_PROVIDERS
+
+envsubst < "${DIR}/ansible-config.yml.tpl" > "${DIR}/working/ansible-config.yml"
 
 function echoerr {
     cat <<< "$@" 1>&2;

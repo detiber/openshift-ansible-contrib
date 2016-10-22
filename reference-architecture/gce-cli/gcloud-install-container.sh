@@ -1,4 +1,4 @@
-#!/usr/local/bin/bash
+#!/bin/bash
 
 # MIT License
 #
@@ -31,8 +31,8 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 source "${DIR}/config.sh"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cat << EOF > working/ansible.env
 GCE_ZONE=${GCLOUD_ZONE}
@@ -41,6 +41,20 @@ GCE_EMAIL=${GCLOUD_SERVICE_ACCOUNT}
 INVENTORY_IP_TYPE=external
 GCE_PROJECT=${GCLOUD_PROJECT}
 EOF
+
+# Prepare config file for ansible based on the configuration from this script
+export DNS_DOMAIN \
+    OCP_APPS_DNS_NAME \
+    MASTER_DNS_NAME \
+    INTERNAL_MASTER_DNS_NAME \
+    CONSOLE_PORT \
+    INFRA_NODE_INSTANCE_GROUP_SIZE \
+    REGISTRY_BUCKET \
+    GCLOUD_PROJECT \
+    OCP_NETWORK \
+    OCP_IDENTITY_PROVIDERS
+
+envsubst < "${DIR}/ansible-config.yml.tpl" > "${DIR}/working/ansible-config.yml"
 
 docker rm gce || true
 docker create --env-file working/ansible.env --name gce install-gce
