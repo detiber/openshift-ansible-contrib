@@ -26,6 +26,10 @@ Parameters:
 {%- endblock vpc_parameters %}
 
 {%- set security_groups = ['ETCD', 'Node', 'Router', 'Master', 'RouterELB', 'MasterExternalELB', 'MasterInternalELB'] %}
+{%- macro security_group(name) -%}
+{{ name }}SecurityGroup
+{%- endmacro -%}
+
 {%- block security_group_parameters %}
 {%- if openshift_aws_provision_security_groups %}
   SecurityGroupTemplateURL:
@@ -33,7 +37,7 @@ Parameters:
     Default: '{% block security_group_default_template %}https://s3.amazonaws.com/openshift-cloudformation-templates/security-groups/default.yaml{% endblock security_group_default_template %}'
 {%- else %}
 {%- for group in security_groups %}
-  {{ group }}SecurityGroups:
+  {{ security_group(group) }}s:
     Type: 'List<AWS::EC2::SecurityGroup::Id>'
 {%- endfor %}
 {%- endif %}
@@ -119,7 +123,7 @@ Resources:
         NodeInstanceProfile:             {{ get_or_ref(openshift_aws_provision_iam_profiles, 'IAMStack', 'NodeInstanceProfile') }}
         MasterInstanceProfile:           {{ get_or_ref(openshift_aws_provision_iam_profiles, 'IAMStack', 'MasterInstanceProfile') }}
 {%- for group in security_groups %}
-{%- set group_name = group ~ 'SecurityGroups' %}
+{%- set group_name = security_group(group) ~ s %}
         {{ '%-32s %s' | format(group_name ~ ':', get_or_ref(openshift_aws_provision_security_groups, 'SecurityGroupStack', group_name)) }}
 {%- endfor %}
 {%- endblock control_plane_stack_definition %}

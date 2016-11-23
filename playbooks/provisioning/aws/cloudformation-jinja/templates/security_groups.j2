@@ -6,230 +6,67 @@ Parameters:
   MasterAPIPort:
     Type: Number
 
+{%- from 'cluster.j2' import security_group, security_groups %}
+
 Resources:
-  MasterSecurityGroup:
+{%- for group in security_groups + ['SSH'] %}
+  {{ security_group(group) }}:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
-      GroupDescription: 'OpenShift Masters'
+      GroupDescription: 'OpenShift {{ group }}s'
       VpcId: !Ref VPC
-  MasterExternalELBSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      GroupDescription: 'OpenShift Masters External Load-Balancer'
-      VpcId: !Ref VPC
-  MasterInternalELBSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      GroupDescription: 'OpenShift Masters Internal Load-Balancer'
-      VpcId: !Ref VPC
-  NodeSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      GroupDescription: 'OpenShift Nodes'
-      VpcId: !Ref VPC
-  ETCDSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      GroupDescription: 'OpenShift etcd Hosts'
-      VpcId: !Ref VPC
-  RouterSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      GroupDescription: 'OpenShift Routers'
-      VpcId: !Ref VPC
-  RouterELBSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      GroupDescription: 'OpenShift Routers Load-Balancer'
-      VpcId: !Ref VPC
-  SSHSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      GroupDescription: 'SSH Access'
-      VpcId: !Ref VPC
+{%- endfor %}
 
-  SSHSecurityGroupIngress:
+{% macro external_ingress(destination, to_port, from_port='', identifier='') %}
+{%- if from_port == '' %}{%- set from_port = to_port %}{% endif -%}
+  {{ security_group(destination) ~ identifier }}Ingress:
     Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn: !Ref SSHSecurityGroup
+    DependsOn: !Ref {{ security_group(destination) }}
     Properties:
-      GroupId:    !Ref SSHSecurityGroup
+      GroupId:    !Ref {{ security_group(destination) }}
       CidrIp:     0.0.0.0/0
-      ToPort:     22
-      FromPort:   22
+      ToPort:     {{ to_port }}
+      FromPort:   {{ from_port }}
       IpProtocol: tcp
+{%- endmacro %}
 
-  MasterExternalELBSecurityGroupIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn: !Ref MasterExternalELBSecurityGroup
-    Properties:
-      GroupId:    !Ref MasterExternalELBSecurityGroup
-      CidrIp:     0.0.0.0/0
-      ToPort:     !Ref MasterAPIPort
-      FromPort:   !Ref MasterAPIPort
-      IpProtocol: tcp
+{{ external_ingress(destination='SSH',                                   to_port=22                  ) }}
+{{ external_ingress(destination='MasterExternalELB',                     to_port='!Ref MasterAPIPort') }}
+{{ external_ingress(destination='RouterELB',         identifier='HTTP',  to_port=80                  ) }}
+{{ external_ingress(destination='RouterELB',         identifier='HTTPS', to_port=443                 ) }}
 
-  RouterELBSecurityGroupHTTPIngress:
+{%- macro internal_ingress(destination, source, to_port, from_port='', identifier='', protocol='tcp') %}
+{%- if from_port == '' %}{%- set from_port = to_port %}{% endif -%}
+{%- if identifier == '' %}{%- set identifier = source %}{% endif -%}
+  {{ security_group(destination) ~ identifier }}Ingress:
     Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn: !Ref RouterELBSecurityGroup
+    DependsOn:
+      - !Ref {{ security_group(source) }}
+{%- if source != destination %}
+      - !Ref {{ security_group(destination) }}
+{%- endif %}
     Properties:
-      GroupId:    !Ref RouterELBSecurityGroup
-      CidrIp:     0.0.0.0/0
-      ToPort:     80
-      FromPort:   80
-      IpProtocol: tcp
-  RouterELBSecurityGroupHTTPsIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn: !Ref RouterELBSecurityGroup
-    Properties:
-      GroupId:    !Ref RouterELBSecurityGroup
-      CidrIp:     0.0.0.0/0
-      ToPort:     443
-      FromPort:   443
-      IpProtocol: tcp
+      GroupId:               !Ref {{ security_group(destination) }}
+      SourceSecurityGroupId: !Ref {{ security_group(source) }}
+      ToPort:                {{ to_port }}
+      FromPort:              {{ from_port }}
+      IpProtocol:            {{ protocol }}
+{%- endmacro %}
 
-  ETCDSecurityGroupMasterIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref ETCDSecurityGroup
-      - !Ref MasterSecurityGroup
-    Properties:
-      GroupId:               !Ref ETCDSecurityGroup
-      SourceSecurityGroupId: !Ref MasterSecurityGroup
-      ToPort:                2379
-      FromPort:              2379
-      IpProtocol:            tcp
-  ETCDSecurityGroupETCDIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref ETCDSecurityGroup
-    Properties:
-      GroupId:               !Ref ETCDSecurityGroup
-      SourceSecurityGroupId: !Ref ETCDSecurityGroup
-      ToPort:                2380
-      FromPort:              2379
-      IpProtocol:            tcp
+{{ internal_ingress(destination='ETCD',              source='Master',                                  to_port=2379                ) }}
+{{ internal_ingress(destination='ETCD',              source='ETCD',                                    to_port=2380, from_port=2379) }}
+{{ internal_ingress(destination='Node',              source='Master',                                  to_port=10250               ) }}
+{{ internal_ingress(destination='Node',              source='Node',              identifier='Kubelet', to_port=10250               ) }}
+{{ internal_ingress(destination='Node',              source='Node',              identifier='VXLAN',   to_port=4789, protocol='udp') }}
+{{ internal_ingress(destination='Master',            source='Master',            identifier='API',     to_port='!Ref MasterAPIPort') }}
+{{ internal_ingress(destination='Master',            source='Node',                                    to_port='!Ref MasterAPIPort') }}
+{{ internal_ingress(destination='Master',            source='MasterInternalELB',                       to_port='!Ref MasterAPIPort') }}
+{{ internal_ingress(destination='Master',            source='MasterExternalELB',                       to_port='!Ref MasterAPIPort') }}
+{{ internal_ingress(destination='MasterInternalELB', source='Master',                                  to_port='!Ref MasterAPIPort') }}
+{{ internal_ingress(destination='MasterInternalELB', source='Node',                                    to_port='!Ref MasterAPIPort') }}
+{{ internal_ingress(destination='Router',            source='RouterELB',         identifier='HTTP',    to_port=80                  ) }}
+{{ internal_ingress(destination='Router',            source='RouterELB',         identifier='HTTPS',   to_port=443                 ) }}
 
-  NodeSecurityGroupMasterIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref NodeSecurityGroup
-      - !Ref MasterSecurityGroup
-    Properties:
-      GroupId:               !Ref NodeSecurityGroup
-      SourceSecurityGroupId: !Ref MasterSecurityGroup
-      ToPort:                10250
-      FromPort:              10250
-      IpProtocol:            tcp
-  NodeSecurityGroupKubeletIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref NodeSecurityGroup
-    Properties:
-      GroupId:               !Ref NodeSecurityGroup
-      SourceSecurityGroupId: !Ref NodeSecurityGroup
-      ToPort:                10250
-      FromPort:              10250
-      IpProtocol:            tcp
-  NodeSecurityGroupVXLANIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref NodeSecurityGroup
-    Properties:
-      GroupId:               !Ref NodeSecurityGroup
-      SourceSecurityGroupId: !Ref NodeSecurityGroup
-      ToPort:                4789
-      FromPort:              4789
-      IpProtocol:            udp
-
-  MasterSecurityGroupMasterAPIIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref MasterSecurityGroup
-    Properties:
-      GroupId:               !Ref MasterSecurityGroup
-      SourceSecurityGroupId: !Ref MasterSecurityGroup
-      ToPort:                !Ref MasterAPIPort
-      FromPort:              !Ref MasterAPIPort
-      IpProtocol:            tcp
-  MasterSecurityGroupNodeIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref MasterSecurityGroup
-      - !Ref NodeSecurityGroup
-    Properties:
-      GroupId:               !Ref MasterSecurityGroup
-      SourceSecurityGroupId: !Ref NodeSecurityGroup
-      ToPort:                !Ref MasterAPIPort
-      FromPort:              !Ref MasterAPIPort
-      IpProtocol:            tcp
-  MasterSecurityGroupMasterInternalELBIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref MasterSecurityGroup
-      - !Ref MasterInternalELBSecurityGroup
-    Properties:
-      GroupId:               !Ref MasterSecurityGroup
-      SourceSecurityGroupId: !Ref MasterInternalELBSecurityGroup
-      ToPort:                !Ref MasterAPIPort
-      FromPort:              !Ref MasterAPIPort
-      IpProtocol:            tcp
-  MasterSecurityGroupMasterExternalELBIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref MasterSecurityGroup
-      - !Ref MasterExternalELBSecurityGroup
-    Properties:
-      GroupId:               !Ref MasterSecurityGroup
-      SourceSecurityGroupId: !Ref MasterExternalELBSecurityGroup
-      ToPort:                !Ref MasterAPIPort
-      FromPort:              !Ref MasterAPIPort
-      IpProtocol:            tcp
-
-  MasterInternalELBSecurityGroupMasterIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref MasterInternalELBSecurityGroup
-      - !Ref MasterSecurityGroup
-    Properties:
-      GroupId:               !Ref MasterInternalELBSecurityGroup
-      SourceSecurityGroupId: !Ref MasterSecurityGroup
-      ToPort:                !Ref MasterAPIPort
-      FromPort:              !Ref MasterAPIPort
-      IpProtocol:            tcp
-  MasterInternalELBSecurityGroupNodeIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref MasterInternalELBSecurityGroup
-      - !Ref NodeSecurityGroup
-    Properties:
-      GroupId:               !Ref MasterInternalELBSecurityGroup
-      SourceSecurityGroupId: !Ref NodeSecurityGroup
-      ToPort:                !Ref MasterAPIPort
-      FromPort:              !Ref MasterAPIPort
-      IpProtocol:            tcp
-
-  RouterSecurityGroupHTTPIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref RouterSecurityGroup
-      - !Ref RouterELBSecurityGroup
-    Properties:
-      GroupId:               !Ref RouterSecurityGroup
-      SourceSecurityGroupId: !Ref RouterELBSecurityGroup
-      ToPort:                80
-      FromPort:              80
-      IpProtocol:            tcp
-  RouterSecurityGroupHTTPSIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref RouterSecurityGroup
-      - !Ref RouterELBSecurityGroup
-    Properties:
-      GroupId:               !Ref RouterSecurityGroup
-      SourceSecurityGroupId: !Ref RouterELBSecurityGroup
-      ToPort:                443
-      FromPort:              443
-      IpProtocol:            tcp
 
   MasterExternalELBSecurityGroupEgress:
     Type: 'AWS::EC2::SecurityGroupEgress'
