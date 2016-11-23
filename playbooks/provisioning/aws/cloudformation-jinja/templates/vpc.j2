@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: OpenShift VPC and Subnet Template
+Parameters:
+  VPCCIDRBlock:
+    Type: String
+  SubnetCIDRBlocks:
+    Type: CommaDelimitedList
+  SubnetAvailabilityZones:
+    Type: 'List<AWS::EC2::AvailabilityZone::Name>'
+
+Resources:
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock:          !Ref VPCCIDRBlock
+      EnableDnsSupport:   True
+      EnableDnsHostnames: True
+  VPCInternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties: {}
+  VPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId:             !Ref VPC
+      InternetGatewayId: !Ref VPCInternetGateway
+  VPCRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+  VPCRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      GatewayId:            !Ref VPCInternetGateway
+      RouteTableId:         !Ref VPCRouteTable
+      DestinationCIDRBlock: 0.0.0.0/0
+{%- for i in range(openshift_aws_num_subnets) %}
+  Subnet{{ i }}:
+    Type: 'AWS::EC2::Subnet'
+    DependsOn:
+      - VPCIdentifier
+    Properties:
+      VpcId:               !Ref VPC
+      CidrBlock:           !Select [{{ i }}, !Ref SubnetCIDRBlocks]
+      AvailabilityZone:    !Select [{{ i }}, !Ref SubnetAvailabilityZones]
+      MapPublicIpOnLaunch: True
+  Subnet{{ i }}RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId:     !Ref Subnet{{ i }}
+      RouteTableId: !Ref VPCRouteTable
+{%- endfor %}
+
+Outputs:
+  VPC:
+    Value: !Ref VPC
+  MasterInstanceSubnets:
+    Value:
+{%- for i in range(openshift_aws_num_subnets) %}
+      - !Ref Subnet{{i}}
+{%- endfor %}
