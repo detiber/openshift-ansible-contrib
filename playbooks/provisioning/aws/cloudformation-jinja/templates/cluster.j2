@@ -25,14 +25,15 @@ Parameters:
 {%- endif %}
 {%- endblock vpc_parameters %}
 
+{%- set security_groups = ['ETCD', 'Node', 'Router', 'Master', 'RouterELB', 'MasterExternalELB', 'MasterInternalELB'] %}
 {%- block security_group_parameters %}
 {%- if openshift_aws_provision_security_groups %}
   SecurityGroupTemplateURL:
     Type: String
     Default: '{% block security_group_default_template %}https://s3.amazonaws.com/openshift-cloudformation-templates/security-groups/default.yaml{% endblock security_group_default_template %}'
 {%- else %}
-{%- for type in ['ETCD', 'Node', 'Router', 'Master', 'RouterELB', 'MasterExternalELB', 'MasterInternalELB'] %}
-  {{ type }}SecurityGroups:
+{%- for group in security_groups %}
+  {{ group }}SecurityGroups:
     Type: 'List<AWS::EC2::SecurityGroup::Id>'
 {%- endfor %}
 {%- endif %}
@@ -84,10 +85,6 @@ Resources:
 {%- endif %}
 {%- endmacro %}
 
-{%- macro get_or_ref_security_group(var) -%}
-{{ get_or_ref(openshift_aws_provision_security_groups, 'SecurityGroupStack', var ~ 'SecurityGroups') }}
-{%- endmacro %}
-
 {%- block security_group_stack_definition %}
 {%- if openshift_aws_provision_security_groups %}
   SecurityGroupStack:
@@ -121,11 +118,8 @@ Resources:
         MasterUserData:                  !Ref MasterUserData
         NodeInstanceProfile:             {{ get_or_ref(openshift_aws_provision_iam_profiles, 'IAMStack', 'NodeInstanceProfile') }}
         MasterInstanceProfile:           {{ get_or_ref(openshift_aws_provision_iam_profiles, 'IAMStack', 'MasterInstanceProfile') }}
-        ETCDSecurityGroups:              {{ get_or_ref_security_group('ETCD') }}
-        NodeSecurityGroups:              {{ get_or_ref_security_group('Node') }}
-        RouterSecurityGroups:            {{ get_or_ref_security_group('Router') }}
-        MasterSecurityGroups:            {{ get_or_ref_security_group('Master') }}
-        RouterELBSecurityGroups:         {{ get_or_ref_security_group('RouterELB') }}
-        MasterExternalELBSecurityGroups: {{ get_or_ref_security_group('MasterExternalELB') }}
-        MasterInternalELBSecurityGroups: {{ get_or_ref_security_group('MasterInternalELB') }}
+{%- for group in security_groups %}
+{%- set group_name = group ~ 'SecurityGroups' %}
+        {{ '%-32s %s' | format(group_name ~ ':', get_or_ref(openshift_aws_provision_security_groups, 'SecurityGroupStack', group_name)) }}
+{%- endfor %}
 {%- endblock control_plane_stack_definition %}
