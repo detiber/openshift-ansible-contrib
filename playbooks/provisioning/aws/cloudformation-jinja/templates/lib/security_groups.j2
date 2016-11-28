@@ -1,0 +1,19 @@
+{# These are the literal names of security groups we can create. #}
+{% set ssh        = 'SSH' %}
+{% set etcd       = 'ETCD' %}
+{% set node       = 'Node' %}
+{% set router     = 'Router' %}
+{% set router_elb = router ~ 'ELB' %}
+{% set master     = 'Master' %}
+{% set master_external_elb = master ~ 'ExternalELB' %}
+{% set master_internal_elb = master ~ 'InternalELB' %}
+
+{# security_group_for_name returns the name of the security group for the component. #}
+{%- macro security_group_for_name(name) -%}
+{{ name }}SecurityGroup
+{%- endmacro -%}
+
+{# security_grouping_for_name returns the name of the logical group of security groups for the component. #}
+{%- macro security_grouping_for_name(name) -%}
+{{ security_group_for_name(name) }}s
+{%- endmacro -%}

@@ -1,3 +1,61 @@
+{%- from 'lib/security_groups.j2' import ssh, etcd, node, router, router_elb, master, master_external_elb, master_internal_elb, security_group_for_name, security_grouping_for_name%}
+{#- security_group emits a AWS::EC2::SecurityGroup definition for the named component #}
+{%- macro security_group(name) %}
+  {{ security_group_for_name(name) }}:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'OpenShift {{ name }}s'
+      VpcId: !Ref VPC
+{%- endmacro -%}
+{#- external_ingress emits an AWS::EC2::SecurityGroupIngress definition for the named component from the internet #}
+{% macro external_ingress(destination, to_port, from_port='', identifier='') %}
+{%- if from_port == '' %}{% set from_port = to_port %}{% endif %}
+  {{ security_group_for_name(destination) ~ identifier }}Ingress:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    DependsOn: !Ref {{ security_group_for_name(destination) }}
+    Properties:
+      GroupId:    !Ref {{ security_group_for_name(destination) }}
+      CidrIp:     0.0.0.0/0
+      ToPort:     {{ to_port }}
+      FromPort:   {{ from_port }}
+      IpProtocol: tcp
+{%- endmacro -%}
+{#- internal_ingress emits an AWS::EC2::SecurityGroupIngress definition for the named component from another component #}
+{%- macro internal_ingress(destination, source, to_port, from_port='', identifier='', protocol='tcp') %}
+{%- if from_port == '' %}{% set from_port = to_port %}{% endif %}
+{%- if identifier == '' and source != destination %}{% set identifier = source %}{% endif %}
+  {{ security_group_for_name(destination) ~ identifier }}Ingress:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    DependsOn:
+      - !Ref {{ security_group_for_name(source) }}
+{%- if source != destination %}
+      - !Ref {{ security_group_for_name(destination) }}
+{%- endif %}
+    Properties:
+      GroupId:               !Ref {{ security_group_for_name(destination) }}
+      SourceSecurityGroupId: !Ref {{ security_group_for_name(source) }}
+      ToPort:                {{ to_port }}
+      FromPort:              {{ from_port }}
+      IpProtocol:            {{ protocol }}
+{%- endmacro -%}
+{#- internal_egress emits an AWS::EC2::SecurityGroupEgress definition for the named component to another component #}
+{%- macro internal_egress(source, destination, to_port, from_port='', identifier='', protocol='tcp') %}
+{%- if from_port == '' %}{% set from_port = to_port %}{% endif %}
+{%- if identifier == '' and source != destination %}{% set identifier = destination %}{% endif %}
+  {{ security_group_for_name(destination) ~ identifier }}Ingress:
+    Type: 'AWS::EC2::SecurityGroupEgress'
+    DependsOn:
+      - !Ref {{ security_group_for_name(source) }}
+{%- if source != destination %}
+      - !Ref {{ security_group_for_name(destination) }}
+{%- endif %}
+    Properties:
+      GroupId:                    !Ref {{ security_group_for_name(source) }}
+      DestinationSecurityGroupId: !Ref {{ security_group_for_name(destination) }}
+      ToPort:                     {{ to_port }}
+      FromPort:                   {{ from_port }}
+      IpProtocol:                 {{ protocol }}
+{%- endmacro -%}
 AWSTemplateFormatVersion: '2010-09-09'
 Description: OpenShift Security Groups Template
 Parameters:
@@ -6,145 +64,58 @@ Parameters:
   MasterAPIPort:
     Type: Number
 
-{%- from 'cluster.j2' import security_group, security_groups %}
-
 Resources:
-{%- for group in security_groups + ['SSH'] %}
-  {{ security_group(group) }}:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      GroupDescription: 'OpenShift {{ group }}s'
-      VpcId: !Ref VPC
+{%- for name in [etcd, node, router, master, router_elb, ssh] -%}
+{{ security_group(name) }}
 {%- endfor %}
 
-{% macro external_ingress(destination, to_port, from_port='', identifier='') %}
-{%- if from_port == '' %}{%- set from_port = to_port %}{% endif -%}
-  {{ security_group(destination) ~ identifier }}Ingress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn: !Ref {{ security_group(destination) }}
-    Properties:
-      GroupId:    !Ref {{ security_group(destination) }}
-      CidrIp:     0.0.0.0/0
-      ToPort:     {{ to_port }}
-      FromPort:   {{ from_port }}
-      IpProtocol: tcp
-{%- endmacro %}
-
-{{ external_ingress(destination='SSH',                                   to_port=22                  ) }}
-{%- if openshift_aws_num_masters > 1 %}
-{{ external_ingress(destination='MasterExternalELB',                     to_port='!Ref MasterAPIPort') }}
-{%- endif %}
-{{ external_ingress(destination='RouterELB',         identifier='HTTP',  to_port=80                  ) }}
-{{ external_ingress(destination='RouterELB',         identifier='HTTPS', to_port=443                 ) }}
-
-{%- macro internal_ingress(destination, source, to_port, from_port='', identifier='', protocol='tcp') %}
-{%- if from_port == '' %}{%- set from_port = to_port %}{% endif -%}
-{%- if identifier == '' %}{%- set identifier = source %}{% endif -%}
-  {{ security_group(destination) ~ identifier }}Ingress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    DependsOn:
-      - !Ref {{ security_group(source) }}
-{%- if source != destination %}
-      - !Ref {{ security_group(destination) }}
-{%- endif %}
-    Properties:
-      GroupId:               !Ref {{ security_group(destination) }}
-      SourceSecurityGroupId: !Ref {{ security_group(source) }}
-      ToPort:                {{ to_port }}
-      FromPort:              {{ from_port }}
-      IpProtocol:            {{ protocol }}
-{%- endmacro %}
-
-{{ internal_ingress(destination='ETCD',              source='Master',                                  to_port=2379                ) }}
-{{ internal_ingress(destination='ETCD',              source='ETCD',                                    to_port=2380, from_port=2379) }}
-{{ internal_ingress(destination='Node',              source='Master',                                  to_port=10250               ) }}
-{{ internal_ingress(destination='Node',              source='Node',              identifier='Kubelet', to_port=10250               ) }}
-{{ internal_ingress(destination='Node',              source='Node',              identifier='VXLAN',   to_port=4789, protocol='udp') }}
-{{ internal_ingress(destination='Master',            source='Master',            identifier='API',     to_port='!Ref MasterAPIPort') }}
-{{ internal_ingress(destination='Master',            source='Node',                                    to_port='!Ref MasterAPIPort') }}
-{%- if openshift_aws_num_masters > 1 %}
-{{ internal_ingress(destination='Master',            source='MasterInternalELB',                       to_port='!Ref MasterAPIPort') }}
-{{ internal_ingress(destination='Master',            source='MasterExternalELB',                       to_port='!Ref MasterAPIPort') }}
-{{ internal_ingress(destination='MasterInternalELB', source='Master',                                  to_port='!Ref MasterAPIPort') }}
-{{ internal_ingress(destination='MasterInternalELB', source='Node',                                    to_port='!Ref MasterAPIPort') }}
-{%- endif %}
-{{ internal_ingress(destination='Router',            source='RouterELB',         identifier='HTTP',    to_port=80                  ) }}
-{{ internal_ingress(destination='Router',            source='RouterELB',         identifier='HTTPS',   to_port=443                 ) }}
-
+{{ external_ingress(destination=ssh,                                                                        to_port=22                  ) -}}
+{{ external_ingress(destination=router_elb,                                           identifier='HTTP',    to_port=80                  ) -}}
+{{ external_ingress(destination=router_elb,                                           identifier='HTTPS',   to_port=443                 ) -}}
+{{ internal_ingress(destination=etcd,                source=master,                                         to_port=2379                ) -}}
+{{ internal_ingress(destination=etcd,                source=etcd,                                           to_port=2380, from_port=2379) -}}
+{{ internal_ingress(destination=node,                source=master,                                         to_port=10250               ) -}}
+{{ internal_ingress(destination=node,                source=node,                     identifier='Kubelet', to_port=10250               ) -}}
+{{ internal_ingress(destination=node,                source=node,                     identifier='VXLAN',   to_port=4789, protocol='udp') -}}
+{{ internal_ingress(destination=master,              source=master,                   identifier='API',     to_port='!Ref MasterAPIPort') -}}
+{{ internal_ingress(destination=master,              source=node,                                           to_port='!Ref MasterAPIPort') -}}
+{{ internal_ingress(destination=router,              source=router_elb,               identifier='HTTP',    to_port=80                  ) -}}
+{{ internal_ingress(destination=router,              source=router_elb,               identifier='HTTPS',   to_port=443                 ) -}}
+{{  internal_egress(source=router_elb,               destination=router_elb,          identifier='HTTP',    to_port=80                  ) -}}
+{{  internal_egress(source=router_elb,               destination=router_elb,          identifier='HTTPS',   to_port=443                 ) -}}
 
 {%- if openshift_aws_num_masters > 1 %}
-  MasterExternalELBSecurityGroupEgress:
-    Type: 'AWS::EC2::SecurityGroupEgress'
-    DependsOn: !Ref MasterExternalELBSecurityGroup
-    Properties:
-      GroupId:                    !Ref MasterExternalELBSecurityGroup
-      DestinationSecurityGroupId: !Ref MasterExternalELBSecurityGroup
-      ToPort:                     !Ref MasterAPIPort
-      FromPort:                   !Ref MasterAPIPort
-      IpProtocol:                 tcp
-{%- endif %}
+{%- for name in [master_external_elb, master_internal_elb] -%}
+{{ security_group(name) }}
+{%- endfor %}
 
-  RouterELBSecurityGroupHTTPEgress:
-    Type: 'AWS::EC2::SecurityGroupEgress'
-    DependsOn: !Ref RouterELBSecurityGroup
-    Properties:
-      GroupId:                    !Ref RouterELBSecurityGroup
-      DestinationSecurityGroupId: !Ref RouterELBSecurityGroup
-      ToPort:                     80
-      FromPort:                   80
-      IpProtocol:                 tcp
-  RouterELBSecurityGroupHTTPSEgress:
-    Type: 'AWS::EC2::SecurityGroupEgress'
-    DependsOn: !Ref RouterELBSecurityGroup
-    Properties:
-      GroupId:                    !Ref RouterELBSecurityGroup
-      DestinationSecurityGroupId: !Ref RouterELBSecurityGroup
-      ToPort:                     443
-      FromPort:                   443
-      IpProtocol:                 tcp
-
-{%- if openshift_aws_num_masters > 1 %}
-  MasterInternalELBSecurityGroupMasterEgress:
-    Type: 'AWS::EC2::SecurityGroupEgress'
-    DependsOn:
-      - !Ref MasterExternalELBSecurityGroup
-      - !Ref MasterSecurityGroup
-    Properties:
-      GroupId:                    !Ref MasterExternalELBSecurityGroup
-      DestinationSecurityGroupId: !Ref MasterSecurityGroup
-      ToPort:                     !Ref MasterAPIPort
-      FromPort:                   !Ref MasterAPIPort
-      IpProtocol:                 tcp
+{{ external_ingress(destination=master_external_elb,                                                        to_port='!Ref MasterAPIPort') -}}
+{{ internal_ingress(destination=master,              source=master_internal_elb,                            to_port='!Ref MasterAPIPort') -}}
+{{ internal_ingress(destination=master,              source=master_external_elb,                            to_port='!Ref MasterAPIPort') -}}
+{{ internal_ingress(destination=master_internal_elb, source=master,                                         to_port='!Ref MasterAPIPort') -}}
+{{ internal_ingress(destination=master_internal_elb, source=node,                                           to_port='!Ref MasterAPIPort') -}}
+{{  internal_egress(source=master_external_elb,      destination=master_external_elb,                       to_port='!Ref MasterAPIPort') -}}
+{{  internal_egress(source=master_internal_elb,      destination=master_internal_elb,                       to_port='!Ref MasterAPIPort') -}}
 {%- endif %}
 
 Outputs:
-  MasterSecurityGroups:
-    Value:
-      - !Ref MasterSecurityGroup
-      - !Ref NodeSecurityGroup
-      - !Ref ETCDSecurityGroup
-      - !Ref SSHSecurityGroup
-  NodeSecurityGroups:
-    Value:
-      - !Ref NodeSecurityGroup
-      - !Ref SSHSecurityGroup
-  ETCDSecurityGroups:
-    Value:
-      - !Ref ETCDSecurityGroup
-      - !Ref SSHSecurityGroup
-  RouterSecurityGroups:
-    Value:
-      - !Ref RouterSecurityGroup
-      - !Ref NodeSecurityGroup
-      - !Ref SSHSecurityGroup
-  RouterELBSecurityGroups:
-    Value:
-      - !Ref RouterELBSecurityGroup
+{%- set security_grouping_mapping = [
+	(master,     [master, node, etcd, ssh]),
+	(node,       [node, ssh]),
+	(etcd,       [etcd, ssh]),
+	(router,     [router, node, ssh]),
+	(router_elb, [router_elb])
+] %}
 {%- if openshift_aws_num_masters > 1 %}
-  MasterExternalELBSecurityGroups:
-    Value:
-      - !Ref MasterExternalELBSecurityGroup
-  MasterInternalELBSecurityGroups:
-    Value:
-      - !Ref MasterInternalELBSecurityGroup
+{%- set security_grouping_mapping = security_grouping_mapping + [
+	(master_external_elb, [master_external_elb]),
+	(master_internal_elb, [master_internal_elb]),
+] %}
 {%- endif %}
+{%- for name, constituents in security_grouping_mapping %}
+  {{ security_grouping_for_name(name) }}:
+    Value:
+{%- for part in constituents %}
+      - !Ref {{ security_group_for_name(part) }}
+{%- endfor %}
+{%- endfor %}
