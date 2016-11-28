@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: OpenShift Cluster Template
+Parameters:
+  NamePrefix:
+    Type: String
+  MasterAPIPort:
+    Type: Number
+  KeyName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+
+{%- block vpc_parameters %}
+{%- if openshift_aws_provision_vpc %}
+  VPCTemplateURL:
+    Type: String
+    Default: '{% block vpc_default_template %}https://s3.amazonaws.com/openshift-cloudformation-templates/vpc/default.yaml{% endblock vpc_default_template %}'
+  VPCCIDRBlock:
+    Type: String
+  SubnetCIDRBlocks:
+    Type: CommaDelimitedList
+  SubnetAvailabilityZones:
+    Type: 'List<AWS::EC2::AvailabilityZone::Name>'
+{%- else %}
+  VPC:
+    Type: 'AWS::EC2::VPC::Id'
+{%- endif %}
+{%- endblock vpc_parameters %}
+
+{%- set core_security_groups = ['ETCD', 'Node', 'Router', 'Master', 'RouterELB'] %}
+{%- if openshift_aws_num_masters > 1 %}
+{%- set security_groups = core_security_groups + ['MasterExternalELB', 'MasterInternalELB'] %}
+{%- else %}
+{%- set security_groups = core_security_groups %}
+{%- endif %}
+{%- macro security_group(name) -%}
+{{ name }}SecurityGroup
+{%- endmacro -%}
+
+{%- block security_group_parameters %}
+{%- if openshift_aws_provision_security_groups %}
+  SecurityGroupTemplateURL:
+    Type: String
+    Default: '{% block security_group_default_template %}https://s3.amazonaws.com/openshift-cloudformation-templates/security-groups/default.yaml{% endblock security_group_default_template %}'
+{%- else %}
+{%- for group in security_groups %}
+  {{ security_group(group) }}s:
+    Type: 'List<AWS::EC2::SecurityGroup::Id>'
+{%- endfor %}
+{%- endif %}
+{%- endblock security_group_parameters %}
+
+{%- block iam_profile_parameters %}
+{%- if openshift_aws_provision_iam_profiles %}
+  IAMInstanceProfileTemplateURL:
+    Type: String
+    Default: '{% block iam_profile_default_template %}https://s3.amazonaws.com/openshift-cloudformation-templates/iam-profiles/default.yaml{% endblock iam_profile_default_template %}'
+{%- else %}
+  MasterInstanceProfile:
+    Type: String
+  NodeInstanceProfile:
+    Type: String
+{%- endif %}
+{%- endblock iam_profile_parameters %}
+
+{%- block control_plane_parameters %}
+  MasterUserData:
+    Type: String
+  MasterInstanceSubnets:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+  ControlPlaneTemplateURL:
+    Type: String
+    Default: '{% block control_plane_default_template %}https://s3.amazonaws.com/openshift-cloudformation-templates/control-plane/default.yaml{% endblock control_plane_default_template %}'
+{%- endblock control_plane_parameters %}
+
+Resources:
+{%- block vpc_stack_definition %}
+{%- if openshift_aws_provision_vpc %}
+  VPCStack:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Ref VPCTemplateURL
+      Parameters:
+        VPCName:                 !Join ['', [!Ref NamePrefix, '_vpc']]
+        VPCCIDRBlock:            !Ref VPCCIDRBlock
+        SubnetCIDRBlocks:        !Ref SubnetCIDRBlocks
+        SubnetAvailabilityZones: !Ref SubnetAvailabilityZones
+{%- endif %}
+{%- endblock vpc_stack_definition %}
+
+{%- macro get_or_ref(control_var, stack, var) -%}
+{% if control_var -%}
+!GetAtt {{ stack }}.Outputs.{{ var }}
+{%- else -%}
+!Ref {{ var }}
+{%- endif %}
+{%- endmacro %}
+
+{%- block security_group_stack_definition %}
+{%- if openshift_aws_provision_security_groups %}
+  SecurityGroupStack:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Ref SecurityGroupTemplateURL
+      Parameters:
+        VPC:           {{ get_or_ref(openshift_aws_provision_vpc, 'VPCStack', 'VPC') }}
+        MasterAPIPort: !Ref MasterAPIPort
+{%- endif %}
+{%- endblock security_group_stack_definition %}
+
+{%- block iam_profile_stack_definition %}
+{%- if openshift_aws_provision_iam_profiles %}
+  IAMStack:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Ref IAMInstanceProfileTemplateURL
+{%- endif %}
+{%- endblock iam_profile_stack_definition %}
+
+{%- block control_plane_stack_definition %}
+  ControlPlaneStack:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Ref ControlPlaneTemplateURL
+      Parameters:
+        KeyName:                         !Ref KeyName
+        MasterSubnets:                   {{ get_or_ref(openshift_aws_provision_vpc, 'VPCStack', 'MasterInstanceSubnets') }}
+        MasterAPIPort:                   !Ref MasterAPIPort
+        MasterUserData:                  !Ref MasterUserData
+        NodeInstanceProfile:             {{ get_or_ref(openshift_aws_provision_iam_profiles, 'IAMStack', 'NodeInstanceProfile') }}
+        MasterInstanceProfile:           {{ get_or_ref(openshift_aws_provision_iam_profiles, 'IAMStack', 'MasterInstanceProfile') }}
+{%- for group in security_groups %}
+{%- set group_name = security_group(group) ~ s %}
+        {{ '%-32s %s' | format(group_name ~ ':', get_or_ref(openshift_aws_provision_security_groups, 'SecurityGroupStack', group_name)) }}
+{%- endfor %}
+{%- endblock control_plane_stack_definition %}
