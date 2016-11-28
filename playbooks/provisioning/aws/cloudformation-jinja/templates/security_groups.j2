@@ -31,7 +31,9 @@ Resources:
 {%- endmacro %}
 
 {{ external_ingress(destination='SSH',                                   to_port=22                  ) }}
+{%- if openshift_aws_num_masters > 1 %}
 {{ external_ingress(destination='MasterExternalELB',                     to_port='!Ref MasterAPIPort') }}
+{%- endif %}
 {{ external_ingress(destination='RouterELB',         identifier='HTTP',  to_port=80                  ) }}
 {{ external_ingress(destination='RouterELB',         identifier='HTTPS', to_port=443                 ) }}
 
@@ -60,14 +62,17 @@ Resources:
 {{ internal_ingress(destination='Node',              source='Node',              identifier='VXLAN',   to_port=4789, protocol='udp') }}
 {{ internal_ingress(destination='Master',            source='Master',            identifier='API',     to_port='!Ref MasterAPIPort') }}
 {{ internal_ingress(destination='Master',            source='Node',                                    to_port='!Ref MasterAPIPort') }}
+{%- if openshift_aws_num_masters > 1 %}
 {{ internal_ingress(destination='Master',            source='MasterInternalELB',                       to_port='!Ref MasterAPIPort') }}
 {{ internal_ingress(destination='Master',            source='MasterExternalELB',                       to_port='!Ref MasterAPIPort') }}
 {{ internal_ingress(destination='MasterInternalELB', source='Master',                                  to_port='!Ref MasterAPIPort') }}
 {{ internal_ingress(destination='MasterInternalELB', source='Node',                                    to_port='!Ref MasterAPIPort') }}
+{%- endif %}
 {{ internal_ingress(destination='Router',            source='RouterELB',         identifier='HTTP',    to_port=80                  ) }}
 {{ internal_ingress(destination='Router',            source='RouterELB',         identifier='HTTPS',   to_port=443                 ) }}
 
 
+{%- if openshift_aws_num_masters > 1 %}
   MasterExternalELBSecurityGroupEgress:
     Type: 'AWS::EC2::SecurityGroupEgress'
     DependsOn: !Ref MasterExternalELBSecurityGroup
@@ -77,6 +82,7 @@ Resources:
       ToPort:                     !Ref MasterAPIPort
       FromPort:                   !Ref MasterAPIPort
       IpProtocol:                 tcp
+{%- endif %}
 
   RouterELBSecurityGroupHTTPEgress:
     Type: 'AWS::EC2::SecurityGroupEgress'
@@ -97,6 +103,7 @@ Resources:
       FromPort:                   443
       IpProtocol:                 tcp
 
+{%- if openshift_aws_num_masters > 1 %}
   MasterInternalELBSecurityGroupMasterEgress:
     Type: 'AWS::EC2::SecurityGroupEgress'
     DependsOn:
@@ -108,6 +115,7 @@ Resources:
       ToPort:                     !Ref MasterAPIPort
       FromPort:                   !Ref MasterAPIPort
       IpProtocol:                 tcp
+{%- endif %}
 
 Outputs:
   MasterSecurityGroups:
@@ -132,9 +140,11 @@ Outputs:
   RouterELBSecurityGroups:
     Value:
       - !Ref RouterELBSecurityGroup
+{%- if openshift_aws_num_masters > 1 %}
   MasterExternalELBSecurityGroups:
     Value:
       - !Ref MasterExternalELBSecurityGroup
   MasterInternalELBSecurityGroups:
     Value:
       - !Ref MasterInternalELBSecurityGroup
+{%- endif %}

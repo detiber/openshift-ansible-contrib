@@ -25,7 +25,12 @@ Parameters:
 {%- endif %}
 {%- endblock vpc_parameters %}
 
-{%- set security_groups = ['ETCD', 'Node', 'Router', 'Master', 'RouterELB', 'MasterExternalELB', 'MasterInternalELB'] %}
+{%- set core_security_groups = ['ETCD', 'Node', 'Router', 'Master', 'RouterELB'] %}
+{%- if openshift_aws_num_masters > 1 %}
+{%- set security_groups = core_security_groups + ['MasterExternalELB', 'MasterInternalELB'] %}
+{%- else %}
+{%- set security_groups = core_security_groups %}
+{%- endif %}
 {%- macro security_group(name) -%}
 {{ name }}SecurityGroup
 {%- endmacro -%}

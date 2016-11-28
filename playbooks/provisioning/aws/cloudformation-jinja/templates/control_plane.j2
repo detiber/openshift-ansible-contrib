@@ -3,10 +3,12 @@ Description: OpenShift Integrated Control Plane
 Parameters:
   MasterSecurityGroups:
     Type: 'List<AWS::EC2::SecurityGroup::Id>'
+{%- if openshift_aws_num_masters > 1 %}
   MasterExternalELBSecurityGroups:
     Type: 'List<AWS::EC2::SecurityGroup::Id>'
   MasterInternalELBSecurityGroups:
     Type: 'List<AWS::EC2::SecurityGroup::Id>'
+{%- endif %}
   MasterInstanceType:
     Type: String
   MasterImageID:
@@ -53,6 +55,7 @@ Resources:
 {%- endfor %}
       UserData: !Ref MasterUserData
 {%- endfor %}
+{%- if openshift_aws_num_masters > 1 %}
 {%- for name, scheme in [('External', 'internet-facing'), ('Internal', 'internal')] %}
   Master{{ name }}LoadBalancer:
     Type: 'AWS::ElasticLoadBalancing::LoadBalancer'
@@ -79,3 +82,4 @@ Resources:
         UnhealthyThreshold: 2
         Target: !Join ['', ['https:', !Ref MasterAPIPort, '/healthz/ready']]
 {%- endfor %}
+{%- endif %}

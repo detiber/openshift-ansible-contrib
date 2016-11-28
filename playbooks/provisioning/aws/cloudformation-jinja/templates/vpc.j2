@@ -33,7 +33,7 @@ Resources:
       GatewayId:            !Ref VPCInternetGateway
       RouteTableId:         !Ref VPCRouteTable
       DestinationCIDRBlock: 0.0.0.0/0
-{%- for i in range(openshift_aws_num_subnets) %}
+{%- for i in range(openshift_aws_num_masters) %}
   Subnet{{ i }}:
     Type: 'AWS::EC2::Subnet'
     DependsOn:
@@ -55,6 +55,6 @@ Outputs:
     Value: !Ref VPC
   MasterInstanceSubnets:
     Value:
-{%- for i in range(openshift_aws_num_subnets) %}
+{%- for i in range(openshift_aws_num_masters) %}
       - !Ref Subnet{{i}}
 {%- endfor %}
